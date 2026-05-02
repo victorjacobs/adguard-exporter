@@ -15,8 +15,14 @@ var (
 	queryDetailsBuckets      = []float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90}
 )
 
-// rollingCounter tracks a value from an API that can reset (e.g. rolling window)
-// and synthesises a monotonically increasing total so rate() works correctly.
+// rollingCounter tracks a value from a sliding-window API and synthesises a
+// monotonically increasing total so rate() works correctly.
+//
+// AdGuard's stats API returns a 24h sliding window. Every hour the oldest
+// bucket expires, causing the value to drop slightly. We only accumulate
+// increases (positive deltas); drops are ignored by updating lastRaw without
+// adding anything. This keeps the counter monotonically increasing through
+// both hourly bucket expirations and exporter restarts.
 type rollingCounter struct {
 	mu          sync.Mutex
 	lastRaw     float64
@@ -25,8 +31,6 @@ type rollingCounter struct {
 }
 
 // update accepts the latest raw value from the API and returns the cumulative total.
-// If the new value is less than the previous one a reset is assumed: the new value
-// is added on top of the running total rather than replacing it.
 func (r *rollingCounter) update(raw float64) float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -36,12 +40,11 @@ func (r *rollingCounter) update(raw float64) float64 {
 		r.initialised = true
 		return r.cumulative
 	}
-	if raw >= r.lastRaw {
+	if raw > r.lastRaw {
 		r.cumulative += raw - r.lastRaw
-	} else {
-		// Reset detected: add the new window's value on top
-		r.cumulative += raw
 	}
+	// On any decrease (bucket expiry or restart): update lastRaw but add nothing,
+	// keeping the cumulative total flat until queries start increasing again.
 	r.lastRaw = raw
 	return r.cumulative
 }
