@@ -1,8 +1,10 @@
 package collector
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -78,6 +80,22 @@ type Collector struct {
 	processingTimeMs        *prometheus.Desc
 	processingTimeSec       *prometheus.Desc
 	queriesDetailsHistogram *prometheus.Desc
+
+	// Filtering metrics
+	filteringEnabled *prometheus.Desc
+	filterRulesCount *prometheus.Desc
+	userRulesCount   *prometheus.Desc
+
+	// TLS metrics
+	tlsEnabled            *prometheus.Desc
+	tlsCertificateExpiry  *prometheus.Desc
+	tlsCertificateValid   *prometheus.Desc
+
+	// DNS config metrics
+	dnsCacheEnabled    *prometheus.Desc
+	dnsCacheSizeBytes  *prometheus.Desc
+	dnsRatelimit       *prometheus.Desc
+	dnssecEnabled      *prometheus.Desc
 
 	// Counter
 	scrapeErrors *prometheus.CounterVec
@@ -191,6 +209,59 @@ func NewCollector(client *Client, server string, logger *slog.Logger) *Collector
 		[]string{"client_name", "protocol", "reason", "server", "status", "upstream", "user"}, nil,
 	)
 
+	c.filteringEnabled = prometheus.NewDesc(
+		"adguard_filtering_enabled",
+		"Whether DNS filtering is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+	c.filterRulesCount = prometheus.NewDesc(
+		"adguard_filter_rules_count",
+		"Number of rules in a filter list.",
+		[]string{"server", "id", "name", "url"}, nil,
+	)
+	c.userRulesCount = prometheus.NewDesc(
+		"adguard_user_rules_count",
+		"Number of user-defined filtering rules.",
+		serverLabel, nil,
+	)
+
+	c.tlsEnabled = prometheus.NewDesc(
+		"adguard_tls_enabled",
+		"Whether TLS is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+	c.tlsCertificateExpiry = prometheus.NewDesc(
+		"adguard_tls_certificate_expiry_seconds",
+		"Unix timestamp when the TLS certificate expires.",
+		serverLabel, nil,
+	)
+	c.tlsCertificateValid = prometheus.NewDesc(
+		"adguard_tls_certificate_valid",
+		"Whether the TLS certificate is fully valid: cert, chain, key, and pair (1 = valid, 0 = invalid).",
+		serverLabel, nil,
+	)
+
+	c.dnsCacheEnabled = prometheus.NewDesc(
+		"adguard_dns_cache_enabled",
+		"Whether DNS caching is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+	c.dnsCacheSizeBytes = prometheus.NewDesc(
+		"adguard_dns_cache_size_bytes",
+		"Configured DNS cache size in bytes.",
+		serverLabel, nil,
+	)
+	c.dnsRatelimit = prometheus.NewDesc(
+		"adguard_dns_ratelimit",
+		"Configured DNS rate limit (requests per second, 0 = unlimited).",
+		serverLabel, nil,
+	)
+	c.dnssecEnabled = prometheus.NewDesc(
+		"adguard_dns_dnssec_enabled",
+		"Whether DNSSEC is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+
 	c.scrapeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "adguard_scrape_errors_total",
 		Help: "Total number of errors scraping AdGuard Home.",
@@ -220,6 +291,16 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.processingTimeMs
 	ch <- c.processingTimeSec
 	ch <- c.queriesDetailsHistogram
+	ch <- c.filteringEnabled
+	ch <- c.filterRulesCount
+	ch <- c.userRulesCount
+	ch <- c.tlsEnabled
+	ch <- c.tlsCertificateExpiry
+	ch <- c.tlsCertificateValid
+	ch <- c.dnsCacheEnabled
+	ch <- c.dnsCacheSizeBytes
+	ch <- c.dnsRatelimit
+	ch <- c.dnssecEnabled
 	c.scrapeErrors.Describe(ch)
 }
 
@@ -237,6 +318,18 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 	if err := c.collectQueryLog(ch); err != nil {
 		c.logger.Error("failed to collect query log", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+	if err := c.collectFiltering(ch); err != nil {
+		c.logger.Error("failed to collect filtering status", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+	if err := c.collectTLS(ch); err != nil {
+		c.logger.Error("failed to collect TLS status", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+	if err := c.collectDNSInfo(ch); err != nil {
+		c.logger.Error("failed to collect DNS info", "err", err)
 		c.scrapeErrors.WithLabelValues(c.server).Inc()
 	}
 }
@@ -470,6 +563,59 @@ func (c *Collector) collectQueryLog(ch chan<- prometheus.Metric) error {
 			dhk.status, dhk.upstream, dhk.user,
 		)
 	}
+
+	return nil
+}
+
+func (c *Collector) collectFiltering(ch chan<- prometheus.Metric) error {
+	f, err := c.client.GetFilteringStatus()
+	if err != nil {
+		return err
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.filteringEnabled, prometheus.GaugeValue, boolToFloat(f.Enabled), c.server)
+	ch <- prometheus.MustNewConstMetric(c.userRulesCount, prometheus.GaugeValue, float64(len(f.UserRules)), c.server)
+
+	for _, filter := range f.Filters {
+		ch <- prometheus.MustNewConstMetric(
+			c.filterRulesCount, prometheus.GaugeValue, float64(filter.RulesCount),
+			c.server, fmt.Sprintf("%d", filter.ID), filter.Name, filter.URL,
+		)
+	}
+	return nil
+}
+
+func (c *Collector) collectTLS(ch chan<- prometheus.Metric) error {
+	t, err := c.client.GetTLSStatus()
+	if err != nil {
+		return err
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.tlsEnabled, prometheus.GaugeValue, boolToFloat(t.Enabled), c.server)
+
+	if t.Enabled && t.NotAfter != "" {
+		if expiry, err := time.Parse(time.RFC3339, t.NotAfter); err == nil {
+			ch <- prometheus.MustNewConstMetric(c.tlsCertificateExpiry, prometheus.GaugeValue, float64(expiry.Unix()), c.server)
+		} else {
+			c.logger.Warn("failed to parse TLS certificate expiry", "not_after", t.NotAfter, "err", err)
+		}
+		valid := t.ValidCert && t.ValidChain && t.ValidKey && t.ValidPair
+		ch <- prometheus.MustNewConstMetric(c.tlsCertificateValid, prometheus.GaugeValue, boolToFloat(valid), c.server)
+	}
+
+	return nil
+}
+
+func (c *Collector) collectDNSInfo(ch chan<- prometheus.Metric) error {
+	d, err := c.client.GetDNSInfo()
+	if err != nil {
+		return err
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.dnsCacheEnabled, prometheus.GaugeValue, boolToFloat(d.CacheEnabled), c.server)
+	ch <- prometheus.MustNewConstMetric(c.dnsCacheSizeBytes, prometheus.GaugeValue, float64(d.CacheSize), c.server)
+	ch <- prometheus.MustNewConstMetric(c.dnsRatelimit, prometheus.GaugeValue, float64(d.Ratelimit), c.server)
+	ch <- prometheus.MustNewConstMetric(c.dnssecEnabled, prometheus.GaugeValue, boolToFloat(d.DNSSECEnabled), c.server)
 
 	return nil
 }

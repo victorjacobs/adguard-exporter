@@ -26,6 +26,16 @@ Prometheus exporter for [AdGuard Home](https://github.com/AdguardTeam/AdGuardHom
 | `adguard_processing_time_seconds` | Histogram | Query processing time in seconds |
 | `adguard_queries_details_histogram` | Histogram | Processing time histogram with full label set |
 | `adguard_scrape_errors_total` | Counter | Total scrape errors |
+| `adguard_filtering_enabled` | Gauge | Whether DNS filtering is enabled |
+| `adguard_filter_rules_count` | Gauge | Number of rules per filter list (labels: `id`, `name`, `url`) |
+| `adguard_user_rules_count` | Gauge | Number of user-defined filtering rules |
+| `adguard_tls_enabled` | Gauge | Whether TLS is enabled |
+| `adguard_tls_certificate_expiry_seconds` | Gauge | Unix timestamp when the TLS certificate expires |
+| `adguard_tls_certificate_valid` | Gauge | Whether the TLS certificate is fully valid (cert + chain + key + pair) |
+| `adguard_dns_cache_enabled` | Gauge | Whether DNS caching is enabled |
+| `adguard_dns_cache_size_bytes` | Gauge | Configured DNS cache size in bytes |
+| `adguard_dns_ratelimit` | Gauge | Configured DNS rate limit (req/s, 0 = unlimited) |
+| `adguard_dns_dnssec_enabled` | Gauge | Whether DNSSEC is enabled |
 
 > **Note on `adguard_queries` / `adguard_queries_blocked`:** AdGuard's stats API returns a rolling window that resets at the top of each hour. The exporter detects these resets and maintains a monotonically increasing cumulative total, so `rate()` works correctly without hourly spikes.
 

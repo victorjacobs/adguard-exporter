@@ -85,6 +85,33 @@ func (c *Client) GetStats() (*StatsResponse, error) {
 	return &stats, nil
 }
 
+// GetFilteringStatus fetches the AdGuard Home filtering configuration.
+func (c *Client) GetFilteringStatus() (*FilteringStatusResponse, error) {
+	var f FilteringStatusResponse
+	if err := c.get("/control/filtering/status", &f); err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// GetTLSStatus fetches the AdGuard Home TLS configuration.
+func (c *Client) GetTLSStatus() (*TLSStatusResponse, error) {
+	var t TLSStatusResponse
+	if err := c.get("/control/tls/status", &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// GetDNSInfo fetches the AdGuard Home DNS configuration.
+func (c *Client) GetDNSInfo() (*DNSInfoResponse, error) {
+	var d DNSInfoResponse
+	if err := c.get("/control/dns_info", &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // GetQueryLog fetches the AdGuard Home query log.
 func (c *Client) GetQueryLog() (*QueryLogResponse, error) {
 	var log QueryLogResponse

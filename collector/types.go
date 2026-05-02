@@ -52,6 +52,48 @@ type QueryLogEntry struct {
 	ServiceName string  `json:"service_name,omitempty"`
 }
 
+// FilteringStatusResponse represents the /control/filtering/status API response.
+type FilteringStatusResponse struct {
+	Enabled         bool     `json:"enabled"`
+	Interval        int      `json:"interval"`
+	Filters         []Filter `json:"filters"`
+	WhitelistFilters []Filter `json:"whitelist_filters"`
+	UserRules       []string `json:"user_rules"`
+}
+
+// Filter represents a single filter list.
+type Filter struct {
+	Enabled     bool   `json:"enabled"`
+	ID          int64  `json:"id"`
+	LastUpdated string `json:"last_updated"`
+	Name        string `json:"name"`
+	RulesCount  int    `json:"rules_count"`
+	URL         string `json:"url"`
+}
+
+// TLSStatusResponse represents the /control/tls/status API response.
+type TLSStatusResponse struct {
+	Enabled    bool   `json:"enabled"`
+	ValidCert  bool   `json:"valid_cert"`
+	ValidChain bool   `json:"valid_chain"`
+	ValidKey   bool   `json:"valid_key"`
+	ValidPair  bool   `json:"valid_pair"`
+	NotAfter   string `json:"not_after"`
+	NotBefore  string `json:"not_before"`
+	Subject    string `json:"subject"`
+	Issuer     string `json:"issuer"`
+}
+
+// DNSInfoResponse represents the /control/dns_info API response.
+type DNSInfoResponse struct {
+	CacheEnabled    bool `json:"cache_enabled"`
+	CacheSize       int  `json:"cache_size"`
+	CacheOptimistic bool `json:"cache_optimistic"`
+	Ratelimit       int  `json:"ratelimit"`
+	DNSSECEnabled   bool `json:"dnssec_enabled"`
+	DisableIPv6     bool `json:"disable_ipv6"`
+}
+
 // Question represents the DNS question in a query log entry.
 type Question struct {
 	Type  string `json:"type"`
