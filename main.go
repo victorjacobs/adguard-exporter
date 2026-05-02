@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/victorquispesegura/adguard-exporter/collector"
+	"github.com/victorjacobs/adguard-exporter/collector"
 )
 
 func envOrDefault(key, def string) string {

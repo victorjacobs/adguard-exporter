@@ -1,4 +1,4 @@
-module github.com/victorquispesegura/adguard-exporter
+module github.com/victorjacobs/adguard-exporter
 
 go 1.26.2
 
