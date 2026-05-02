@@ -2,6 +2,7 @@ package collector
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -12,11 +13,46 @@ var (
 	queryDetailsBuckets      = []float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90}
 )
 
+// rollingCounter tracks a value from an API that can reset (e.g. rolling window)
+// and synthesises a monotonically increasing total so rate() works correctly.
+type rollingCounter struct {
+	mu         sync.Mutex
+	lastRaw    float64
+	cumulative float64
+	initialised bool
+}
+
+// update accepts the latest raw value from the API and returns the cumulative total.
+// If the new value is less than the previous one a reset is assumed: the new value
+// is added on top of the running total rather than replacing it.
+func (r *rollingCounter) update(raw float64) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.initialised {
+		r.cumulative = raw
+		r.lastRaw = raw
+		r.initialised = true
+		return r.cumulative
+	}
+	if raw >= r.lastRaw {
+		r.cumulative += raw - r.lastRaw
+	} else {
+		// Reset detected: add the new window's value on top
+		r.cumulative += raw
+	}
+	r.lastRaw = raw
+	return r.cumulative
+}
+
 // Collector implements prometheus.Collector for AdGuard Home.
 type Collector struct {
 	client *Client
 	server string
 	logger *slog.Logger
+
+	// Rolling-window counters that can reset at the top of each hour
+	queriesCounter        rollingCounter
+	queriesBlockedCounter rollingCounter
 
 	// Simple gauges
 	running              *prometheus.Desc
@@ -79,12 +115,12 @@ func NewCollector(client *Client, server string, logger *slog.Logger) *Collector
 	)
 	c.queries = prometheus.NewDesc(
 		"adguard_queries",
-		"Total number of DNS queries processed (rolling window, may reset).",
+		"Cumulative total DNS queries processed. Reset-detection applied to AdGuard's rolling window API.",
 		serverLabel, nil,
 	)
 	c.queriesBlocked = prometheus.NewDesc(
 		"adguard_queries_blocked",
-		"Total number of DNS queries blocked (rolling window, may reset).",
+		"Cumulative total DNS queries blocked. Reset-detection applied to AdGuard's rolling window API.",
 		serverLabel, nil,
 	)
 	c.replacedSafebrowsing = prometheus.NewDesc(
@@ -240,8 +276,10 @@ func (c *Collector) collectStats(ch chan<- prometheus.Metric) error {
 
 	// avg_processing_time from API is in milliseconds, convert to seconds
 	ch <- prometheus.MustNewConstMetric(c.avgProcessingTime, prometheus.GaugeValue, stats.AvgProcessingTime/1000.0, c.server)
-	ch <- prometheus.MustNewConstMetric(c.queries, prometheus.GaugeValue, float64(stats.NumDNSQueries), c.server)
-	ch <- prometheus.MustNewConstMetric(c.queriesBlocked, prometheus.GaugeValue, float64(stats.NumBlockedFiltering), c.server)
+
+	// Use reset-aware counters so hourly window resets don't produce spikes in rate()
+	ch <- prometheus.MustNewConstMetric(c.queries, prometheus.GaugeValue, c.queriesCounter.update(float64(stats.NumDNSQueries)), c.server)
+	ch <- prometheus.MustNewConstMetric(c.queriesBlocked, prometheus.GaugeValue, c.queriesBlockedCounter.update(float64(stats.NumBlockedFiltering)), c.server)
 	ch <- prometheus.MustNewConstMetric(c.replacedSafebrowsing, prometheus.GaugeValue, float64(stats.NumReplacedSafebrowsing), c.server)
 	ch <- prometheus.MustNewConstMetric(c.replacedParental, prometheus.GaugeValue, float64(stats.NumReplacedParental), c.server)
 	ch <- prometheus.MustNewConstMetric(c.replacedSafesearch, prometheus.GaugeValue, float64(stats.NumReplacedSafesearch), c.server)
