@@ -18,9 +18,9 @@ var (
 // rollingCounter tracks a value from an API that can reset (e.g. rolling window)
 // and synthesises a monotonically increasing total so rate() works correctly.
 type rollingCounter struct {
-	mu         sync.Mutex
-	lastRaw    float64
-	cumulative float64
+	mu          sync.Mutex
+	lastRaw     float64
+	cumulative  float64
 	initialised bool
 }
 
@@ -87,15 +87,15 @@ type Collector struct {
 	userRulesCount   *prometheus.Desc
 
 	// TLS metrics
-	tlsEnabled            *prometheus.Desc
-	tlsCertificateExpiry  *prometheus.Desc
-	tlsCertificateValid   *prometheus.Desc
+	tlsEnabled           *prometheus.Desc
+	tlsCertificateExpiry *prometheus.Desc
+	tlsCertificateValid  *prometheus.Desc
 
 	// DNS config metrics
-	dnsCacheEnabled    *prometheus.Desc
-	dnsCacheSizeBytes  *prometheus.Desc
-	dnsRatelimit       *prometheus.Desc
-	dnssecEnabled      *prometheus.Desc
+	dnsCacheEnabled   *prometheus.Desc
+	dnsCacheSizeBytes *prometheus.Desc
+	dnsRatelimit      *prometheus.Desc
+	dnssecEnabled     *prometheus.Desc
 
 	// Counter
 	scrapeErrors *prometheus.CounterVec
@@ -367,8 +367,7 @@ func (c *Collector) collectStats(ch chan<- prometheus.Metric) error {
 		return err
 	}
 
-	// avg_processing_time from API is in milliseconds, convert to seconds
-	ch <- prometheus.MustNewConstMetric(c.avgProcessingTime, prometheus.GaugeValue, stats.AvgProcessingTime/1000.0, c.server)
+	ch <- prometheus.MustNewConstMetric(c.avgProcessingTime, prometheus.GaugeValue, stats.AvgProcessingTime, c.server)
 
 	// Use reset-aware counters so hourly window resets don't produce spikes in rate()
 	ch <- prometheus.MustNewConstMetric(c.queries, prometheus.GaugeValue, c.queriesCounter.update(float64(stats.NumDNSQueries)), c.server)
