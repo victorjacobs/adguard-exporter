@@ -1,0 +1,454 @@
+package collector
+
+import (
+	"log/slog"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	processingTimeMsBuckets  = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+	processingTimeSecBuckets = []float64{0.000005, 0.00001, 0.000025, 0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01}
+	queryDetailsBuckets      = []float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90}
+)
+
+// Collector implements prometheus.Collector for AdGuard Home.
+type Collector struct {
+	client *Client
+	server string
+	logger *slog.Logger
+
+	// Simple gauges
+	running              *prometheus.Desc
+	protectionEnabled    *prometheus.Desc
+	dhcpEnabled          *prometheus.Desc
+	avgProcessingTime    *prometheus.Desc
+	queries              *prometheus.Desc
+	queriesBlocked       *prometheus.Desc
+	replacedSafebrowsing *prometheus.Desc
+	replacedParental     *prometheus.Desc
+	replacedSafesearch   *prometheus.Desc
+
+	// Labeled gauges
+	queriesDetails          *prometheus.Desc
+	queryTypes              *prometheus.Desc
+	topQueriedDomains       *prometheus.Desc
+	topBlockedDomains       *prometheus.Desc
+	topClients              *prometheus.Desc
+	topUpstreams            *prometheus.Desc
+	topUpstreamsAvgRespTime *prometheus.Desc
+
+	// Histograms
+	processingTimeMs        *prometheus.Desc
+	processingTimeSec       *prometheus.Desc
+	queriesDetailsHistogram *prometheus.Desc
+
+	// Counter
+	scrapeErrors *prometheus.CounterVec
+}
+
+// NewCollector creates a new AdGuard Home Prometheus collector.
+func NewCollector(client *Client, server string, logger *slog.Logger) *Collector {
+	c := &Collector{
+		client: client,
+		server: server,
+		logger: logger,
+	}
+
+	serverLabel := []string{"server"}
+
+	c.running = prometheus.NewDesc(
+		"adguard_running",
+		"Whether AdGuard Home is running (1 = running, 0 = not running).",
+		serverLabel, nil,
+	)
+	c.protectionEnabled = prometheus.NewDesc(
+		"adguard_protection_enabled",
+		"Whether DNS protection is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+	c.dhcpEnabled = prometheus.NewDesc(
+		"adguard_dhcp_enabled",
+		"Whether the DHCP server is enabled (1 = enabled, 0 = disabled).",
+		serverLabel, nil,
+	)
+	c.avgProcessingTime = prometheus.NewDesc(
+		"adguard_avg_processing_time_seconds",
+		"Average DNS query processing time in seconds.",
+		serverLabel, nil,
+	)
+	c.queries = prometheus.NewDesc(
+		"adguard_queries",
+		"Total number of DNS queries processed (rolling window, may reset).",
+		serverLabel, nil,
+	)
+	c.queriesBlocked = prometheus.NewDesc(
+		"adguard_queries_blocked",
+		"Total number of DNS queries blocked (rolling window, may reset).",
+		serverLabel, nil,
+	)
+	c.replacedSafebrowsing = prometheus.NewDesc(
+		"adguard_replaced_safebrowsing",
+		"Total number of queries replaced by safe browsing.",
+		serverLabel, nil,
+	)
+	c.replacedParental = prometheus.NewDesc(
+		"adguard_replaced_parental",
+		"Total number of queries replaced by parental control.",
+		serverLabel, nil,
+	)
+	c.replacedSafesearch = prometheus.NewDesc(
+		"adguard_replaced_safesearch",
+		"Total number of queries replaced by safe search.",
+		serverLabel, nil,
+	)
+
+	c.queriesDetails = prometheus.NewDesc(
+		"adguard_queries_details",
+		"Number of DNS queries with detailed label breakdown.",
+		[]string{"client", "client_name", "domain", "protocol", "reason", "server", "status", "type", "upstream"}, nil,
+	)
+	c.queryTypes = prometheus.NewDesc(
+		"adguard_query_types",
+		"Number of DNS queries by type.",
+		[]string{"server", "type"}, nil,
+	)
+	c.topQueriedDomains = prometheus.NewDesc(
+		"adguard_top_queried_domains",
+		"Top queried domains.",
+		[]string{"domain", "server"}, nil,
+	)
+	c.topBlockedDomains = prometheus.NewDesc(
+		"adguard_top_blocked_domains",
+		"Top blocked domains.",
+		[]string{"domain", "server"}, nil,
+	)
+	c.topClients = prometheus.NewDesc(
+		"adguard_top_clients",
+		"Top clients by number of DNS queries.",
+		[]string{"client", "server"}, nil,
+	)
+	c.topUpstreams = prometheus.NewDesc(
+		"adguard_top_upstreams",
+		"Top upstream DNS servers by number of queries.",
+		[]string{"server", "upstream"}, nil,
+	)
+	c.topUpstreamsAvgRespTime = prometheus.NewDesc(
+		"adguard_top_upstreams_avg_response_time_seconds",
+		"Average response time of top upstream DNS servers in seconds.",
+		[]string{"server", "upstream"}, nil,
+	)
+
+	c.processingTimeMs = prometheus.NewDesc(
+		"adguard_processing_time_milliseconds",
+		"Histogram of DNS query processing time in milliseconds.",
+		[]string{"client", "server", "upstream"}, nil,
+	)
+	c.processingTimeSec = prometheus.NewDesc(
+		"adguard_processing_time_seconds",
+		"Histogram of DNS query processing time in seconds.",
+		[]string{"client", "server", "upstream"}, nil,
+	)
+	c.queriesDetailsHistogram = prometheus.NewDesc(
+		"adguard_queries_details_histogram",
+		"Histogram of DNS queries with detailed label breakdown by processing time (ms).",
+		[]string{"client_name", "protocol", "reason", "server", "status", "upstream", "user"}, nil,
+	)
+
+	c.scrapeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "adguard_scrape_errors_total",
+		Help: "Total number of errors scraping AdGuard Home.",
+	}, []string{"server"})
+
+	return c
+}
+
+// Describe sends descriptors of all metrics to the channel.
+func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.running
+	ch <- c.protectionEnabled
+	ch <- c.dhcpEnabled
+	ch <- c.avgProcessingTime
+	ch <- c.queries
+	ch <- c.queriesBlocked
+	ch <- c.replacedSafebrowsing
+	ch <- c.replacedParental
+	ch <- c.replacedSafesearch
+	ch <- c.queriesDetails
+	ch <- c.queryTypes
+	ch <- c.topQueriedDomains
+	ch <- c.topBlockedDomains
+	ch <- c.topClients
+	ch <- c.topUpstreams
+	ch <- c.topUpstreamsAvgRespTime
+	ch <- c.processingTimeMs
+	ch <- c.processingTimeSec
+	ch <- c.queriesDetailsHistogram
+	c.scrapeErrors.Describe(ch)
+}
+
+// Collect fetches metrics from AdGuard Home and sends them to the channel.
+func (c *Collector) Collect(ch chan<- prometheus.Metric) {
+	c.scrapeErrors.Collect(ch)
+
+	if err := c.collectStatus(ch); err != nil {
+		c.logger.Error("failed to collect status", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+	if err := c.collectStats(ch); err != nil {
+		c.logger.Error("failed to collect stats", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+	if err := c.collectQueryLog(ch); err != nil {
+		c.logger.Error("failed to collect query log", "err", err)
+		c.scrapeErrors.WithLabelValues(c.server).Inc()
+	}
+}
+
+func boolToFloat(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (c *Collector) collectStatus(ch chan<- prometheus.Metric) error {
+	status, err := c.client.GetStatus()
+	if err != nil {
+		return err
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.running, prometheus.GaugeValue, boolToFloat(status.Running), c.server)
+	ch <- prometheus.MustNewConstMetric(c.protectionEnabled, prometheus.GaugeValue, boolToFloat(status.ProtectionEnabled), c.server)
+
+	dhcpEnabled := 0.0
+	if dhcp, err := c.client.GetDHCPStatus(); err == nil {
+		dhcpEnabled = boolToFloat(dhcp.Enabled)
+	} else {
+		c.logger.Warn("failed to fetch DHCP status, defaulting to 0", "err", err)
+	}
+	ch <- prometheus.MustNewConstMetric(c.dhcpEnabled, prometheus.GaugeValue, dhcpEnabled, c.server)
+
+	return nil
+}
+
+func (c *Collector) collectStats(ch chan<- prometheus.Metric) error {
+	stats, err := c.client.GetStats()
+	if err != nil {
+		return err
+	}
+
+	// avg_processing_time from API is in milliseconds, convert to seconds
+	ch <- prometheus.MustNewConstMetric(c.avgProcessingTime, prometheus.GaugeValue, stats.AvgProcessingTime/1000.0, c.server)
+	ch <- prometheus.MustNewConstMetric(c.queries, prometheus.GaugeValue, float64(stats.NumDNSQueries), c.server)
+	ch <- prometheus.MustNewConstMetric(c.queriesBlocked, prometheus.GaugeValue, float64(stats.NumBlockedFiltering), c.server)
+	ch <- prometheus.MustNewConstMetric(c.replacedSafebrowsing, prometheus.GaugeValue, float64(stats.NumReplacedSafebrowsing), c.server)
+	ch <- prometheus.MustNewConstMetric(c.replacedParental, prometheus.GaugeValue, float64(stats.NumReplacedParental), c.server)
+	ch <- prometheus.MustNewConstMetric(c.replacedSafesearch, prometheus.GaugeValue, float64(stats.NumReplacedSafesearch), c.server)
+
+	for _, entry := range stats.TopQueriedDomains {
+		for domain, count := range entry {
+			ch <- prometheus.MustNewConstMetric(c.topQueriedDomains, prometheus.GaugeValue, float64(count), domain, c.server)
+		}
+	}
+	for _, entry := range stats.TopBlockedDomains {
+		for domain, count := range entry {
+			ch <- prometheus.MustNewConstMetric(c.topBlockedDomains, prometheus.GaugeValue, float64(count), domain, c.server)
+		}
+	}
+	for _, entry := range stats.TopClients {
+		for client, count := range entry {
+			ch <- prometheus.MustNewConstMetric(c.topClients, prometheus.GaugeValue, float64(count), client, c.server)
+		}
+	}
+	for _, entry := range stats.TopUpstreamsResponses {
+		for upstream, count := range entry {
+			ch <- prometheus.MustNewConstMetric(c.topUpstreams, prometheus.GaugeValue, float64(count), c.server, upstream)
+		}
+	}
+	for _, entry := range stats.TopUpstreamsAvgTime {
+		for upstream, avg := range entry {
+			ch <- prometheus.MustNewConstMetric(c.topUpstreamsAvgRespTime, prometheus.GaugeValue, avg, c.server, upstream)
+		}
+	}
+	for qtype, count := range stats.QueryTypes {
+		ch <- prometheus.MustNewConstMetric(c.queryTypes, prometheus.GaugeValue, count, c.server, qtype)
+	}
+
+	return nil
+}
+
+// histogramKey groups query log entries for histogram aggregation.
+type histogramKey struct {
+	client   string
+	upstream string
+}
+
+type detailHistogramKey struct {
+	clientName string
+	protocol   string
+	reason     string
+	status     string
+	upstream   string
+	user       string
+}
+
+type detailKey struct {
+	client     string
+	clientName string
+	domain     string
+	protocol   string
+	reason     string
+	status     string
+	qtype      string
+	upstream   string
+}
+
+type histData struct {
+	// cumulative bucket counts indexed by position in the buckets slice
+	buckets map[float64]uint64
+	sum     float64
+	count   uint64
+}
+
+func newHistData(bounds []float64) *histData {
+	m := make(map[float64]uint64, len(bounds))
+	for _, b := range bounds {
+		m[b] = 0
+	}
+	return &histData{buckets: m}
+}
+
+func (h *histData) observe(value float64, bounds []float64) {
+	for _, bound := range bounds {
+		if value <= bound {
+			h.buckets[bound]++
+		}
+	}
+	h.sum += value
+	h.count++
+}
+
+func (c *Collector) collectQueryLog(ch chan<- prometheus.Metric) error {
+	ql, err := c.client.GetQueryLog()
+	if err != nil {
+		return err
+	}
+
+	msHists := make(map[histogramKey]*histData)
+	secHists := make(map[histogramKey]*histData)
+	detailHists := make(map[detailHistogramKey]*histData)
+	detailCounts := make(map[detailKey]float64)
+
+	for _, entry := range ql.Data {
+		elapsedMs := entry.ElapsedMs
+		elapsedSec := elapsedMs / 1000.0
+		upstream := entry.Upstream
+		client := entry.Client
+		clientName := entry.ClientName
+		domain := entry.Question.Name
+		qtype := entry.Question.Type
+		reason := entry.Reason
+		status := entry.Status
+		if status == "" {
+			status = reason
+		}
+		protocol := protocolFromUpstream(upstream)
+
+		// adguard_queries_details
+		dk := detailKey{
+			client:     client,
+			clientName: clientName,
+			domain:     domain,
+			protocol:   protocol,
+			reason:     reason,
+			status:     status,
+			qtype:      qtype,
+			upstream:   upstream,
+		}
+		detailCounts[dk]++
+
+		// Processing time histograms (ms)
+		hk := histogramKey{client: client, upstream: upstream}
+		if _, ok := msHists[hk]; !ok {
+			msHists[hk] = newHistData(processingTimeMsBuckets)
+		}
+		msHists[hk].observe(elapsedMs, processingTimeMsBuckets)
+
+		// Processing time histograms (seconds)
+		if _, ok := secHists[hk]; !ok {
+			secHists[hk] = newHistData(processingTimeSecBuckets)
+		}
+		secHists[hk].observe(elapsedSec, processingTimeSecBuckets)
+
+		// Queries details histogram
+		dhk := detailHistogramKey{
+			clientName: clientName,
+			protocol:   protocol,
+			reason:     reason,
+			status:     status,
+			upstream:   upstream,
+			user:       client,
+		}
+		if _, ok := detailHists[dhk]; !ok {
+			detailHists[dhk] = newHistData(queryDetailsBuckets)
+		}
+		detailHists[dhk].observe(elapsedMs, queryDetailsBuckets)
+	}
+
+	// Emit adguard_queries_details
+	for dk, count := range detailCounts {
+		ch <- prometheus.MustNewConstMetric(
+			c.queriesDetails, prometheus.GaugeValue, count,
+			dk.client, dk.clientName, dk.domain, dk.protocol, dk.reason,
+			c.server, dk.status, dk.qtype, dk.upstream,
+		)
+	}
+
+	// Emit processing time ms histograms
+	for hk, h := range msHists {
+		ch <- prometheus.MustNewConstHistogram(
+			c.processingTimeMs,
+			h.count, h.sum, h.buckets,
+			hk.client, c.server, hk.upstream,
+		)
+	}
+
+	// Emit processing time seconds histograms
+	for hk, h := range secHists {
+		ch <- prometheus.MustNewConstHistogram(
+			c.processingTimeSec,
+			h.count, h.sum, h.buckets,
+			hk.client, c.server, hk.upstream,
+		)
+	}
+
+	// Emit queries details histograms
+	for dhk, dh := range detailHists {
+		ch <- prometheus.MustNewConstHistogram(
+			c.queriesDetailsHistogram,
+			dh.count, dh.sum, dh.buckets,
+			dhk.clientName, dhk.protocol, dhk.reason, c.server,
+			dhk.status, dhk.upstream, dhk.user,
+		)
+	}
+
+	return nil
+}
+
+// protocolFromUpstream infers the protocol from the upstream address.
+func protocolFromUpstream(upstream string) string {
+	if len(upstream) == 0 {
+		return "blocked"
+	}
+	switch {
+	case len(upstream) >= 6 && upstream[:6] == "https:":
+		return "doh"
+	case len(upstream) >= 4 && upstream[:4] == "tls:":
+		return "dot"
+	case len(upstream) >= 5 && upstream[:5] == "quic:":
+		return "doq"
+	default:
+		return "udp"
+	}
+}
