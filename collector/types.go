@@ -43,7 +43,7 @@ type QueryLogEntry struct {
 	Client      string     `json:"client"`
 	ClientInfo  ClientInfo `json:"client_info,omitempty"`
 	Upstream    string     `json:"upstream"`
-	ElapsedMs   float64    `json:"elapsedMs,omitempty"`
+	ElapsedMs   string     `json:"elapsedMs,omitempty"`
 	Time        string     `json:"time"`
 	Reason      string     `json:"reason"`
 	Status      string     `json:"status,omitempty"`

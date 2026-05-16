@@ -3,6 +3,7 @@ package collector
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -474,7 +475,10 @@ func (c *Collector) collectQueryLog(ch chan<- prometheus.Metric) error {
 	detailCounts := make(map[detailKey]float64)
 
 	for _, entry := range ql.Data {
-		elapsedMs := entry.ElapsedMs
+		elapsedMs, err := strconv.ParseFloat(entry.ElapsedMs, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse elapsedMs: %w", err)
+		}
 		elapsedSec := elapsedMs / 1000.0
 		upstream := entry.Upstream
 		client := entry.Client
