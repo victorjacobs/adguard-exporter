@@ -478,7 +478,7 @@ func (c *Collector) collectQueryLog(ch chan<- prometheus.Metric) error {
 		elapsedSec := elapsedMs / 1000.0
 		upstream := entry.Upstream
 		client := entry.Client
-		clientName := entry.ClientName
+		clientName := entry.ClientInfo.Name
 		domain := entry.Question.Name
 		qtype := entry.Question.Type
 		reason := entry.Reason
