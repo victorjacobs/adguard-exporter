@@ -8,10 +8,10 @@
 }:
 
 let
-  cfg = config.services.adguard-exporter;
+  cfg = config.services.prometheus.exporters.adguard;
 in
 {
-  options.services.adguard-exporter = {
+  options.services.prometheus.exporters.adguard = {
     enable = lib.mkEnableOption "the AdGuard Home Prometheus exporter";
 
     package = lib.mkOption {

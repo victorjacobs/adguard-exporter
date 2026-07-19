@@ -94,7 +94,7 @@ Add the flake module to your NixOS configuration:
       modules = [
         adguard-exporter.nixosModules.default
         {
-          services.adguard-exporter = {
+          services.prometheus.exporters.adguard = {
             enable = true;
             adguardUrl = "http://localhost:3000";
             environmentFile = "/run/secrets/adguard-exporter";
