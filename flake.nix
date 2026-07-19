@@ -16,7 +16,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
-        packages.default = pkgs.callPackage ./package.nix { };
+        packages.default = pkgs.callPackage ./nix/package.nix { };
 
         formatter = pkgs.nixfmt-tree;
 
@@ -30,6 +30,6 @@
       }
     )
     // {
-      nixosModules.default = import ./nixos-module.nix { inherit self; };
+      nixosModules.default = import ./nix/module.nix { inherit self; };
     };
 }

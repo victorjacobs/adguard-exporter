@@ -7,7 +7,7 @@ buildGoModule {
   pname = "adguard-exporter";
   version = "unstable";
 
-  src = lib.cleanSource ./.;
+  src = lib.cleanSource ../.;
 
   vendorHash = "sha256-oeCSKwDKVwvYQ1fjXXTwQSXNl/upDE3WAAk680vqh3U=";
 
