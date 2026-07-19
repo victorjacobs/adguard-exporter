@@ -16,6 +16,10 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
+        packages.default = pkgs.callPackage ./package.nix { };
+
+        formatter = pkgs.nixfmt-tree;
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             go_1_26
@@ -24,5 +28,8 @@
           ];
         };
       }
-    );
+    )
+    // {
+      nixosModules.default = import ./nixos-module.nix { inherit self; };
+    };
 }

@@ -80,3 +80,35 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9617']
 ```
+
+### NixOS
+
+Add the flake module to your NixOS configuration:
+
+```nix
+{
+  inputs.adguard-exporter.url = "github:victorjacobs/adguard-exporter";
+
+  outputs = { nixpkgs, adguard-exporter, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      modules = [
+        adguard-exporter.nixosModules.default
+        {
+          services.adguard-exporter = {
+            enable = true;
+            adguardUrl = "http://localhost:3000";
+            environmentFile = "/run/secrets/adguard-exporter";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+The environment file should be readable by the service and contain:
+
+```sh
+ADGUARD_USERNAME=admin
+ADGUARD_PASSWORD=secret
+```
