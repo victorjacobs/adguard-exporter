@@ -38,18 +38,19 @@ type QueryLogResponse struct {
 
 // QueryLogEntry represents a single entry in the query log.
 type QueryLogEntry struct {
-	Question    Question   `json:"question"`
-	Answer      []Answer   `json:"answer,omitempty"`
-	Client      string     `json:"client"`
-	ClientInfo  ClientInfo `json:"client_info,omitempty"`
-	Upstream    string     `json:"upstream"`
-	ElapsedMs   string     `json:"elapsedMs,omitempty"`
-	Time        string     `json:"time"`
-	Reason      string     `json:"reason"`
-	Status      string     `json:"status,omitempty"`
-	FilterID    int64      `json:"filter_id,omitempty"`
-	Rule        string     `json:"rule,omitempty"`
-	ServiceName string     `json:"service_name,omitempty"`
+	Question       Question   `json:"question"`
+	Answer         []Answer   `json:"answer,omitempty"`
+	Client         string     `json:"client"`
+	ClientInfo     ClientInfo `json:"client_info,omitempty"`
+	ClientProtocol string     `json:"client_proto,omitempty"`
+	Upstream       string     `json:"upstream"`
+	ElapsedMs      string     `json:"elapsedMs,omitempty"`
+	Time           string     `json:"time"`
+	Reason         string     `json:"reason"`
+	Status         string     `json:"status,omitempty"`
+	FilterID       int64      `json:"filterId,omitempty"`
+	Rule           string     `json:"rule,omitempty"`
+	ServiceName    string     `json:"service_name,omitempty"`
 }
 
 // FilteringStatusResponse represents the /control/filtering/status API response.

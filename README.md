@@ -10,8 +10,8 @@ Prometheus exporter for [AdGuard Home](https://github.com/AdguardTeam/AdGuardHom
 | `adguard_protection_enabled` | Gauge | Whether DNS protection is enabled |
 | `adguard_dhcp_enabled` | Gauge | Whether the DHCP server is enabled |
 | `adguard_avg_processing_time_seconds` | Gauge | Average DNS query processing time |
-| `adguard_queries` | Gauge | Cumulative DNS queries processed (reset-aware) |
-| `adguard_queries_blocked` | Gauge | Cumulative DNS queries blocked (reset-aware) |
+| `adguard_queries` | Gauge | Monotonic DNS query count synthesized from rolling statistics |
+| `adguard_queries_blocked` | Gauge | Monotonic blocked query count synthesized from rolling statistics |
 | `adguard_replaced_safebrowsing` | Gauge | Queries replaced by safe browsing |
 | `adguard_replaced_parental` | Gauge | Queries replaced by parental control |
 | `adguard_replaced_safesearch` | Gauge | Queries replaced by safe search |
@@ -19,7 +19,7 @@ Prometheus exporter for [AdGuard Home](https://github.com/AdguardTeam/AdGuardHom
 | `adguard_query_types` | Gauge | Query counts by DNS record type |
 | `adguard_top_queried_domains` | Gauge | Top queried domains |
 | `adguard_top_blocked_domains` | Gauge | Top blocked domains |
-| `adguard_top_clients` | Gauge | Top clients by query count |
+| `adguard_top_clients` | Gauge | Monotonic query count for each top client |
 | `adguard_top_upstreams` | Gauge | Top upstream resolvers by query count |
 | `adguard_top_upstreams_avg_response_time_seconds` | Gauge | Average response time per upstream |
 | `adguard_processing_time_milliseconds` | Histogram | Query processing time in milliseconds |
@@ -37,7 +37,11 @@ Prometheus exporter for [AdGuard Home](https://github.com/AdguardTeam/AdGuardHom
 | `adguard_dns_ratelimit` | Gauge | Configured DNS rate limit (req/s, 0 = unlimited) |
 | `adguard_dns_dnssec_enabled` | Gauge | Whether DNSSEC is enabled |
 
-> **Note on `adguard_queries` / `adguard_queries_blocked`:** AdGuard's stats API returns a rolling window that resets at the top of each hour. The exporter detects these resets and maintains a monotonically increasing cumulative total, so `rate()` works correctly without hourly spikes.
+AdGuard Home returns values from a configurable rolling statistics window. The
+exporter synthesizes monotonic values for `adguard_queries`,
+`adguard_queries_blocked`, and `adguard_top_clients` by accumulating increases
+and ignoring window-expiry decreases. These values reset when the exporter
+restarts. Other statistics gauges can decrease as old data leaves the window.
 
 ## Configuration
 
@@ -55,6 +59,7 @@ All options can be set via flags or environment variables.
 ## Usage
 
 ```sh
+direnv allow
 go build -o adguard-exporter .
 ./adguard-exporter \
   --adguard.url http://adguard.local:3000 \

@@ -5,7 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+)
+
+const (
+	requestTimeout  = 30 * time.Second
+	maxResponseSize = 16 << 20
 )
 
 // Client is an AdGuard Home API client.
@@ -16,45 +23,73 @@ type Client struct {
 	httpClient *http.Client
 }
 
+var _ APIClient = &Client{}
+
 // NewClient creates a new AdGuard Home API client.
-func NewClient(baseURL, username, password string) *Client {
+func NewClient(baseURL, username, password string) (*Client, error) {
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse AdGuard URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("parse AdGuard URL: unsupported scheme %q", parsedURL.Scheme)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("parse AdGuard URL: host is required")
+	}
+	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return nil, fmt.Errorf("parse AdGuard URL: query and fragment are not supported")
+	}
+
 	return &Client{
 		baseURL:  baseURL,
 		username: username,
 		password: password,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: requestTimeout,
 		},
-	}
+	}, nil
 }
 
-func (c *Client) get(path string, out interface{}) error {
+func (c *Client) get(path string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("Accept", "application/json")
+
 	if c.username != "" || c.password != "" {
 		req.SetBasicAuth(c.username, c.password)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return fmt.Errorf("execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d for %s", resp.StatusCode, path)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if readErr != nil {
+			return fmt.Errorf("request %s: unexpected status %s (read response: %w)", path, resp.Status, readErr)
+		}
+
+		return fmt.Errorf("request %s: unexpected status %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
-		return fmt.Errorf("reading response body: %w", err)
+		return fmt.Errorf("read response from %s: %w", path, err)
+	}
+	if len(body) > maxResponseSize {
+		return fmt.Errorf("read response from %s: body exceeds %d bytes", path, maxResponseSize)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("decode response from %s: %w", path, err)
 	}
 
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("unmarshalling response: %w", err)
-	}
 	return nil
 }
 
@@ -64,6 +99,7 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 	if err := c.get("/control/status", &status); err != nil {
 		return nil, err
 	}
+
 	return &status, nil
 }
 
@@ -73,6 +109,7 @@ func (c *Client) GetDHCPStatus() (*DHCPStatusResponse, error) {
 	if err := c.get("/control/dhcp/status", &dhcp); err != nil {
 		return nil, err
 	}
+
 	return &dhcp, nil
 }
 
@@ -82,41 +119,46 @@ func (c *Client) GetStats() (*StatsResponse, error) {
 	if err := c.get("/control/stats", &stats); err != nil {
 		return nil, err
 	}
+
 	return &stats, nil
 }
 
 // GetFilteringStatus fetches the AdGuard Home filtering configuration.
 func (c *Client) GetFilteringStatus() (*FilteringStatusResponse, error) {
-	var f FilteringStatusResponse
-	if err := c.get("/control/filtering/status", &f); err != nil {
+	var filtering FilteringStatusResponse
+	if err := c.get("/control/filtering/status", &filtering); err != nil {
 		return nil, err
 	}
-	return &f, nil
+
+	return &filtering, nil
 }
 
 // GetTLSStatus fetches the AdGuard Home TLS configuration.
 func (c *Client) GetTLSStatus() (*TLSStatusResponse, error) {
-	var t TLSStatusResponse
-	if err := c.get("/control/tls/status", &t); err != nil {
+	var tls TLSStatusResponse
+	if err := c.get("/control/tls/status", &tls); err != nil {
 		return nil, err
 	}
-	return &t, nil
+
+	return &tls, nil
 }
 
 // GetDNSInfo fetches the AdGuard Home DNS configuration.
 func (c *Client) GetDNSInfo() (*DNSInfoResponse, error) {
-	var d DNSInfoResponse
-	if err := c.get("/control/dns_info", &d); err != nil {
+	var dnsInfo DNSInfoResponse
+	if err := c.get("/control/dns_info", &dnsInfo); err != nil {
 		return nil, err
 	}
-	return &d, nil
+
+	return &dnsInfo, nil
 }
 
 // GetQueryLog fetches the AdGuard Home query log.
 func (c *Client) GetQueryLog() (*QueryLogResponse, error) {
-	var log QueryLogResponse
-	if err := c.get("/control/querylog?limit=1000", &log); err != nil {
+	var queryLog QueryLogResponse
+	if err := c.get("/control/querylog?limit=1000", &queryLog); err != nil {
 		return nil, err
 	}
-	return &log, nil
+
+	return &queryLog, nil
 }
