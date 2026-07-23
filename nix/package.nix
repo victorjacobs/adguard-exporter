@@ -9,7 +9,7 @@ buildGoModule {
 
   src = lib.cleanSource ../.;
 
-  vendorHash = "sha256-oeCSKwDKVwvYQ1fjXXTwQSXNl/upDE3WAAk680vqh3U=";
+  vendorHash = "sha256-EwRUlc8tMlfHFqqQTs69y7p2yRhSeM6a9zLKtSW5r44=";
 
   meta = {
     description = "Prometheus exporter for AdGuard Home";
